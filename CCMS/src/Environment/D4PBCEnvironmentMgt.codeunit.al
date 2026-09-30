@@ -17,6 +17,14 @@ codeunit 62000 "D4P BC Environment Mgt"
 
     procedure GetEnvironments(var BCTenant: Record "D4P BC Tenant")
     var
+        ErrorMessage: Text;
+    begin
+        if not GetEnvironmentsForTenant(BCTenant, ErrorMessage) then
+            Error(ErrorMessage);
+    end;
+
+    procedure GetEnvironmentsForTenant(var BCTenant: Record "D4P BC Tenant"; var ErrorMessage: Text) Success: Boolean
+    var
         BCEnvironment: Record "D4P BC Environment";
         JsonArray: JsonArray;
         JsonObjectLoop: JsonObject;
@@ -26,15 +34,16 @@ codeunit 62000 "D4P BC Environment Mgt"
         JsonTokenField: JsonToken;
         JsonTokenLoop: JsonToken;
         JsonValue: JsonValue;
-        FailedToFetchErr: Label 'Failed to fetch data from Endpoint: %1', Comment = '%1 = Error message';
     begin
+        ClearLastError();
+        if not TryGetEnvironmentResponse(BCTenant, JsonResponse) then begin
+            ErrorMessage := GetLastErrorText();
+            exit(false);
+        end;
+
         BCEnvironment.SetRange("Customer No.", BCTenant."Customer No.");
         BCEnvironment.SetRange("Tenant ID", BCTenant."Tenant ID");
         BCEnvironment.DeleteAll();
-
-        AdminAPIClient.SetTenant(BCTenant);
-        if not AdminAPIClient.Get('/applications/businesscentral/environments', JsonResponse) then
-            Error(FailedToFetchErr, Format(JsonResponse));
 
         if JsonResponse.Get('value', JsonToken) then begin
             JsonArray := JsonToken.AsArray();
@@ -146,6 +155,18 @@ codeunit 62000 "D4P BC Environment Mgt"
                 BCEnvironment.Insert();
             end;
         end;
+
+        Success := true;
+    end;
+
+    [TryFunction]
+    local procedure TryGetEnvironmentResponse(var BCTenant: Record "D4P BC Tenant"; var JsonResponse: JsonObject)
+    var
+        FailedToFetchErr: Label 'Failed to fetch data from Endpoint: %1', Comment = '%1 = Error message';
+    begin
+        AdminAPIClient.SetTenant(BCTenant);
+        if not AdminAPIClient.Get('/applications/businesscentral/environments', JsonResponse) then
+            Error(FailedToFetchErr, Format(JsonResponse));
     end;
 
     procedure GetAllInstalledApps(ShowProgressDialog: Boolean)
