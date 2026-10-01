@@ -187,6 +187,60 @@ page 62003 "D4P BC Environment List"
                     EnvironmentManagement.GetEnvironments(BCTenant);
                 end;
             }
+            action(GetAllEnvironments)
+            {
+                Caption = 'Get All Environments';
+                Image = Refresh;
+                ToolTip = 'Get the list of environments for all tenants.';
+                trigger OnAction()
+                var
+                    BCTenant: Record "D4P BC Tenant";
+                    EnvironmentManagement: Codeunit "D4P BC Environment Mgt";
+                    ProgressDialog: Dialog;
+                    ProcessedCount: Integer;
+                    FailedCount: Integer;
+                    TotalCount: Integer;
+                    ErrorMessage: Text;
+                    ErrorMessages: TextBuilder;
+                    ConfirmMsg: Label 'This will get environments for %1 tenant(s). Continue?', Comment = '%1 = Number of tenants';
+                    NoTenantsMsg: Label 'No tenants to process.';
+                    ProcessingMsg: Label 'Processing tenant #1#### of #2#### @3@@@@@@@@@@@@@@@@@@@@@@@@', Comment = '%1 = index, %2 = total tenants, %3 = Progress bar';
+                    SuccessMsg: Label 'Successfully processed %1 tenant(s).', Comment = '%1 = Number of processed tenants';
+                    CompletedWithErrorsMsg: Label 'Processed %1 of %2 tenant(s). %3 failed: %4', Comment = '%1 = Successful tenants, %2 = Total tenants, %3 = Failed tenants, %4 = Error details';
+                    TenantErrorMsg: Label 'Customer %1, tenant %2 (%3): %4', Comment = '%1 = Customer No., %2 = Tenant Name, %3 = Tenant ID, %4 = Error message';
+                begin
+                    BCTenant.Reset();
+                    TotalCount := BCTenant.Count();
+
+                    if TotalCount = 0 then
+                        Error(NoTenantsMsg);
+
+                    if not Confirm(ConfirmMsg, true, TotalCount) then
+                        exit;
+
+                    ProgressDialog.Open(ProcessingMsg);
+                    if BCTenant.FindSet() then
+                        repeat
+                            ProcessedCount += 1;
+                            ProgressDialog.Update(1, ProcessedCount);
+                            ProgressDialog.Update(2, TotalCount);
+                            ProgressDialog.Update(3, Round(ProcessedCount / TotalCount * 10000, 1));
+                            if not EnvironmentManagement.GetEnvironmentsForTenant(BCTenant, ErrorMessage) then begin
+                                FailedCount += 1;
+                                if FailedCount > 1 then
+                                    ErrorMessages.Append(' | ');
+                                ErrorMessages.Append(StrSubstNo(TenantErrorMsg, BCTenant."Customer No.", BCTenant."Tenant Name", Format(BCTenant."Tenant ID"), ErrorMessage));
+                            end;
+                        until BCTenant.Next() = 0;
+
+                    ProgressDialog.Close();
+                    if FailedCount > 0 then
+                        Message(CompletedWithErrorsMsg, ProcessedCount - FailedCount, ProcessedCount, FailedCount, ErrorMessages.ToText())
+                    else
+                        Message(SuccessMsg, ProcessedCount);
+                    CurrPage.Update(false);
+                end;
+            }
             action(GetEnvironmentUpdateInfo)
             {
                 Caption = 'Get Updates';
@@ -456,6 +510,9 @@ page 62003 "D4P BC Environment List"
             {
                 Caption = 'Environment Tasks';
                 actionref(GetEnvironmentsPromoted; GetEnvironments)
+                {
+                }
+                actionref(GetAllEnvironmentsPromoted; GetAllEnvironments)
                 {
                 }
                 actionref(EnvironmentDetailsPromoted; EnvironmentDetails)
