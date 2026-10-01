@@ -38,12 +38,18 @@ page 62006 "D4P Copy Environment Dialog"
         EnvironmentName := CurrEnvironmentName;
     end;
 
+    procedure GetCopyDetails(var TargetEnvironmentName: Text[100]; var TargetEnvironmentType: Enum "D4P Environment Type")
+    begin
+        TargetEnvironmentName := NewEnvironmentName;
+        TargetEnvironmentType := NewEnvironmentType;
+    end;
+
     procedure CopyEnvironment()
     var
         EnvironmentManagement: Codeunit "D4P BC Environment Mgt";
     begin
         EnvironmentManagement.CopyBCEnvironment(
-            BCTenant, EnvironmentName, NewEnvironmentName, NewEnvironmentType);
+            BCTenant, EnvironmentName, NewEnvironmentName, NewEnvironmentType, true);
     end;
 
     var

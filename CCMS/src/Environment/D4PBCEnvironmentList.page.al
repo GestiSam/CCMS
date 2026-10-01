@@ -359,19 +359,54 @@ page 62003 "D4P BC Environment List"
             }
             action(CopyEnvironment)
             {
-                Caption = 'Copy';
+                Caption = 'Copy Environments';
                 Image = Copy;
-                ToolTip = 'Creates a copy for the selected environment.';
+                ToolTip = 'Creates a copy for each selected environment using the same new name and type.';
                 trigger OnAction()
                 var
+                    SelectedEnvironment: Record "D4P BC Environment";
+                    FirstSelectedEnvironment: Record "D4P BC Environment";
                     BCTenant: Record "D4P BC Tenant";
+                    EnvironmentManagement: Codeunit "D4P BC Environment Mgt";
                     CopyEnvironmentDialog: Page "D4P Copy Environment Dialog";
+                    TenantKeys: Dictionary of [Text, Boolean];
+                    TenantKey: Text;
+                    NewEnvironmentName: Text[100];
+                    NewEnvironmentType: Enum "D4P Environment Type";
+                    SelectedCount: Integer;
+                    NoEnvironmentsSelectedErr: Label 'Select at least one environment.';
+                    SameTenantSelectionErr: Label 'Select no more than one environment per tenant when using a shared destination name.';
+                    CopiesScheduledMsg: Label 'Copy requests for %1 environment(s) to %2 successfully scheduled.', Comment = '%1 = Number of environments, %2 = New Environment Name';
                 begin
-                    BCTenant.Get(Rec."Customer No.", Rec."Tenant ID");
-                    CopyEnvironmentDialog.SetBCTenant(BCTenant);
-                    CopyEnvironmentDialog.SetCurrentBCEnvironment(Rec.Name);
-                    if CopyEnvironmentDialog.RunModal() = Action::OK then
-                        CopyEnvironmentDialog.CopyEnvironment();
+                    CurrPage.SetSelectionFilter(SelectedEnvironment);
+                    SelectedCount := SelectedEnvironment.Count();
+                    if SelectedCount = 0 then
+                        Error(NoEnvironmentsSelectedErr);
+
+                    if not SelectedEnvironment.FindSet() then
+                        exit;
+
+                    FirstSelectedEnvironment := SelectedEnvironment;
+                    repeat
+                        TenantKey := StrSubstNo('%1|%2', SelectedEnvironment."Customer No.", SelectedEnvironment."Tenant ID");
+                        if TenantKeys.ContainsKey(TenantKey) then
+                            Error(SameTenantSelectionErr);
+                        TenantKeys.Add(TenantKey, true);
+                    until SelectedEnvironment.Next() = 0;
+
+                    CopyEnvironmentDialog.SetCurrentBCEnvironment(FirstSelectedEnvironment.Name);
+                    if CopyEnvironmentDialog.RunModal() <> Action::OK then
+                        exit;
+
+                    CopyEnvironmentDialog.GetCopyDetails(NewEnvironmentName, NewEnvironmentType);
+                    if SelectedEnvironment.FindSet() then
+                        repeat
+                            BCTenant.Get(SelectedEnvironment."Customer No.", SelectedEnvironment."Tenant ID");
+                            EnvironmentManagement.CopyBCEnvironment(
+                                BCTenant, SelectedEnvironment.Name, NewEnvironmentName, NewEnvironmentType, false);
+                        until SelectedEnvironment.Next() = 0;
+
+                    Message(CopiesScheduledMsg, SelectedCount, NewEnvironmentName);
                 end;
             }
             action(RenameEnvironment)

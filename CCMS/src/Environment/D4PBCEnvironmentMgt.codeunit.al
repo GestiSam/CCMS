@@ -595,7 +595,7 @@ codeunit 62000 "D4P BC Environment Mgt"
         Message(EnvironmentCreatedMsg, EnvironmentName);
     end;
 
-    procedure CopyBCEnvironment(var BCTenant: Record "D4P BC Tenant"; SourceEnvironmentName: Text[100]; NewEnvironmentName: Text[100]; NewEnvironmentType: Enum "D4P Environment Type")
+    procedure CopyBCEnvironment(var BCTenant: Record "D4P BC Tenant"; SourceEnvironmentName: Text[100]; NewEnvironmentName: Text[100]; NewEnvironmentType: Enum "D4P Environment Type"; ShowNotification: Boolean)
     var
         JsonObject: JsonObject;
         CopyEnvironmentScheduledMsg: Label 'Copy environment %1 to %2 successfully scheduled.', Comment = '%1 = Source Environment Name, %2 = Target Environment Name';
@@ -612,7 +612,8 @@ codeunit 62000 "D4P BC Environment Mgt"
         then
             Error(FailedToCreateErr, ResponseText);
 
-        Message(CopyEnvironmentScheduledMsg, SourceEnvironmentName, NewEnvironmentName);
+        if ShowNotification then
+            Message(CopyEnvironmentScheduledMsg, SourceEnvironmentName, NewEnvironmentName);
     end;
 
     procedure RenameBCEnvironment(var BCTenant: Record "D4P BC Tenant"; SourceEnvironmentName: Text[100]; NewEnvironmentName: Text[100])
