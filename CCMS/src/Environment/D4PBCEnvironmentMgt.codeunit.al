@@ -648,11 +648,10 @@ codeunit 62000 "D4P BC Environment Mgt"
         Message(EnvironmentMarkedForDeletionMsg, EnvironmentName);
     end;
 
-    procedure GetAvailableUpdates(var BCEnvironment: Record "D4P BC Environment"; var TempAvailableUpdate: Record "D4P BC Available Update" temporary)
+    procedure GetAvailableUpdates(var BCEnvironment: Record "D4P BC Environment"; var TempAvailableUpdate: Record "D4P BC Available Update" temporary; ShowProgressDialog: Boolean)
     var
         BCTenant: Record "D4P BC Tenant";
         ProgressDialog: Dialog;
-        CurrentUpdate: Integer;
         EntryNo: Integer;
         TotalUpdates: Integer;
         JsonArray: JsonArray;
@@ -665,7 +664,6 @@ codeunit 62000 "D4P BC Environment Mgt"
         JsonValue: JsonValue;
         FailedToFetchErr: Label 'Failed to fetch available updates: %1', Comment = '%1 = Error message';
         FetchingUpdatesMsg: Label 'Fetching available updates...';
-        NoUpdatesFoundMsg: Label 'No updates found in API response for environment %1.', Comment = '%1 = Environment Name';
         ProcessingUpdateMsg: Label 'Processing update #1#### of #2####: #3####################', Comment = '%1 = index, %2 = total number of updates, %3 = Progress bar';
         Endpoint: Text;
     begin
@@ -674,13 +672,15 @@ codeunit 62000 "D4P BC Environment Mgt"
         TempAvailableUpdate.DeleteAll();
 
         // Show progress dialog
-        ProgressDialog.Open(FetchingUpdatesMsg);
+        if ShowProgressDialog then
+            ProgressDialog.Open(FetchingUpdatesMsg);
 
         // Call Admin API to get available updates
         Endpoint := '/applications/' + BCEnvironment."Application Family" + '/environments/' + BCEnvironment.Name + '/updates';
         AdminAPIClient.SetTenant(BCTenant);
         if not AdminAPIClient.Get(Endpoint, JsonResponse) then begin
-            ProgressDialog.Close();
+            if ShowProgressDialog then
+                ProgressDialog.Close();
             Error(FailedToFetchErr, Format(JsonResponse));
         end;
 
@@ -690,31 +690,35 @@ codeunit 62000 "D4P BC Environment Mgt"
             EntryNo := 0;
 
             if TotalUpdates = 0 then begin
-                ProgressDialog.Close();
-                Message(NoUpdatesFoundMsg, BCEnvironment.Name);
+                if ShowProgressDialog then
+                    ProgressDialog.Close();
                 exit;
             end;
 
-            ProgressDialog.Close();
-            ProgressDialog.Open(ProcessingUpdateMsg);
+            if ShowProgressDialog then begin
+                ProgressDialog.Close();
+                ProgressDialog.Open(ProcessingUpdateMsg);
+            end;
 
             foreach JsonTokenLoop in JsonArray do begin
                 JsonObjectLoop := JsonTokenLoop.AsObject();
                 EntryNo += 1;
-                CurrentUpdate := EntryNo;
 
                 TempAvailableUpdate.Init();
                 TempAvailableUpdate."Entry No." := EntryNo;
 
                 // Update progress dialog
-                ProgressDialog.Update(1, CurrentUpdate);
-                ProgressDialog.Update(2, TotalUpdates);
+                if ShowProgressDialog then begin
+                    ProgressDialog.Update(1, EntryNo);
+                    ProgressDialog.Update(2, TotalUpdates);
+                end;
 
                 // Get target version
                 if JsonObjectLoop.Get('targetVersion', JsonToken) then begin
                     JsonValue := JsonToken.AsValue();
                     TempAvailableUpdate."Target Version" := CopyStr(JsonValue.AsText(), 1, MaxStrLen(TempAvailableUpdate."Target Version"));
-                    ProgressDialog.Update(3, TempAvailableUpdate."Target Version");
+                    if ShowProgressDialog then
+                        ProgressDialog.Update(3, TempAvailableUpdate."Target Version");
                 end;
 
                 // Get availability status
@@ -789,14 +793,109 @@ codeunit 62000 "D4P BC Environment Mgt"
                 TempAvailableUpdate.Insert();
             end;
 
-            ProgressDialog.Close();
+            if ShowProgressDialog then
+                ProgressDialog.Close();
         end else begin
-            ProgressDialog.Close();
-            Message(NoUpdatesFoundMsg, BCEnvironment.Name);
+            if ShowProgressDialog then
+                ProgressDialog.Close();
         end;
     end;
 
+    procedure SetTargetVersionForEnvironments(var BCEnvironment: Record "D4P BC Environment"; TargetVersion: Text[100]; SelectedDate: Date; ExpectedMonth: Integer; ExpectedYear: Integer)
+    var
+        TempAvailableUpdate: Record "D4P BC Available Update" temporary;
+        ProgressDialog: Dialog;
+        TotalCount: Integer;
+        ProcessedCount: Integer;
+        SucceededCount: Integer;
+        FailedCount: Integer;
+        FailureSummary: Text;
+        FailedEnvironmentText: Label '%1: %2', Comment = '%1 = Environment Name, %2 = Error message';
+        NoEnvironmentsSelectedErr: Label 'Select at least one environment.';
+        VersionNotAvailableErr: Label 'Update version %1 is not available for environment %2.', Comment = '%1 = Target version, %2 = Environment Name';
+        VersionNotSelectableErr: Label 'Update version %1 does not have a selectable date for environment %2.', Comment = '%1 = Target version, %2 = Environment Name';
+        DateOutsideRangeErr: Label 'Selected date %1 is later than the latest selectable date %2 for environment %3.', Comment = '%1 = Selected date, %2 = Latest selectable date, %3 = Environment Name';
+        DateTooEarlyErr: Label 'Selected date cannot be earlier than the current date.';
+        ExpectedAvailabilityMismatchErr: Label 'Update version %1 has a different expected availability for environment %2.', Comment = '%1 = Target version, %2 = Environment Name';
+        ProcessingMsg: Label 'Processing environment #1#### of #2####: #3####################', Comment = '%1 = Index, %2 = Total environments, %3 = Environment name';
+        SuccessMsg: Label 'Update version %1 was applied to %2 environment(s).', Comment = '%1 = Target version, %2 = Number of successful environments';
+        PartialSuccessMsg: Label 'Update version %1 was applied to %2 environment(s); %3 failed: %4', Comment = '%1 = Target version, %2 = Number of successful environments, %3 = Number of failed environments, %4 = Failure details';
+    begin
+        TotalCount := BCEnvironment.Count();
+        if TotalCount = 0 then
+            Error(NoEnvironmentsSelectedErr);
+
+        if (SelectedDate <> 0D) and (SelectedDate < Today()) then
+            Error(DateTooEarlyErr);
+
+        // Validate the common choice against every environment before changing any of them.
+        if BCEnvironment.FindSet() then
+            repeat
+                GetAvailableUpdates(BCEnvironment, TempAvailableUpdate, false);
+                TempAvailableUpdate.SetRange("Target Version", TargetVersion);
+                if not TempAvailableUpdate.FindFirst() then
+                    Error(VersionNotAvailableErr, TargetVersion, BCEnvironment.Name);
+
+                if SelectedDate <> 0D then begin
+                    if not TempAvailableUpdate.Available then
+                        Error(VersionNotAvailableErr, TargetVersion, BCEnvironment.Name);
+                    if TempAvailableUpdate."Latest Selectable Date" = 0D then
+                        Error(VersionNotSelectableErr, TargetVersion, BCEnvironment.Name);
+                    if SelectedDate > TempAvailableUpdate."Latest Selectable Date" then
+                        Error(DateOutsideRangeErr, SelectedDate, TempAvailableUpdate."Latest Selectable Date", BCEnvironment.Name);
+                end else
+                    if (TempAvailableUpdate."Expected Month" <> ExpectedMonth) or (TempAvailableUpdate."Expected Year" <> ExpectedYear) then
+                        Error(ExpectedAvailabilityMismatchErr, TargetVersion, BCEnvironment.Name);
+            until BCEnvironment.Next() = 0;
+
+        ProgressDialog.Open(ProcessingMsg);
+        if BCEnvironment.FindSet() then
+            repeat
+                ProcessedCount += 1;
+                ProgressDialog.Update(1, ProcessedCount);
+                ProgressDialog.Update(2, TotalCount);
+                ProgressDialog.Update(3, BCEnvironment.Name);
+
+                if TryPatchTargetVersion(BCEnvironment, TargetVersion, SelectedDate) then begin
+                    UpdateTargetVersionRecord(BCEnvironment, TargetVersion, SelectedDate, ExpectedMonth, ExpectedYear);
+                    Commit();
+                    SucceededCount += 1;
+                end else begin
+                    FailedCount += 1;
+                    if FailureSummary <> '' then
+                        FailureSummary += '; ';
+                    FailureSummary += StrSubstNo(FailedEnvironmentText, BCEnvironment.Name, GetLastErrorText());
+                end;
+            until BCEnvironment.Next() = 0;
+        ProgressDialog.Close();
+
+        if FailedCount = 0 then
+            Message(SuccessMsg, TargetVersion, SucceededCount)
+        else
+            Message(PartialSuccessMsg, TargetVersion, SucceededCount, FailedCount, FailureSummary);
+    end;
+
     procedure SelectTargetVersion(var BCEnvironment: Record "D4P BC Environment"; TargetVersion: Text[100]; SelectedDate: Date; ExpectedMonth: Integer; ExpectedYear: Integer)
+    var
+        UpdateScheduledMsg: Label 'Update to version %1 successfully scheduled for %2.', Comment = '%1 = Version, %2 = Date';
+        UpdateSelectedMsg: Label 'Update to version %1 successfully selected. Expected availability: %2/%3.', Comment = '%1 = Version, %2 = Month, %3 = Year';
+    begin
+        PatchTargetVersion(BCEnvironment, TargetVersion, SelectedDate);
+        UpdateTargetVersionRecord(BCEnvironment, TargetVersion, SelectedDate, ExpectedMonth, ExpectedYear);
+
+        if SelectedDate <> 0D then
+            Message(UpdateScheduledMsg, TargetVersion, SelectedDate)
+        else
+            Message(UpdateSelectedMsg, TargetVersion, ExpectedMonth, ExpectedYear);
+    end;
+
+    [TryFunction]
+    local procedure TryPatchTargetVersion(var BCEnvironment: Record "D4P BC Environment"; TargetVersion: Text[100]; SelectedDate: Date)
+    begin
+        PatchTargetVersion(BCEnvironment, TargetVersion, SelectedDate);
+    end;
+
+    local procedure PatchTargetVersion(var BCEnvironment: Record "D4P BC Environment"; TargetVersion: Text[100]; SelectedDate: Date)
     var
         BCSetup: Record "D4P BC Setup";
         BCTenant: Record "D4P BC Tenant";
@@ -805,49 +904,43 @@ codeunit 62000 "D4P BC Environment Mgt"
         JsonObject: JsonObject;
         JsonScheduleDetails: JsonObject;
         FailedToSelectErr: Label 'Failed to select target version: %1', Comment = '%1 = Error message';
-        UpdateScheduledMsg: Label 'Update to version %1 successfully scheduled for %2.', Comment = '%1 = Version, %2 = Date';
-        UpdateSelectedMsg: Label 'Update to version %1 successfully selected. Expected availability: %2/%3.', Comment = '%1 = Version, %2 = Month, %3 = Year';
         Endpoint: Text;
         ResponseText: Text;
     begin
         BCTenant.Get(BCEnvironment."Customer No.", BCEnvironment."Tenant ID");
         BCSetup.Get();
 
-        // Determine if the version is available (has a date) or not (has month/year)
         IsAvailable := (SelectedDate <> 0D);
-
-        // Build JSON request body
         JsonObject.Add('selected', true);
 
         if IsAvailable then begin
-            // Convert Date to DateTime (at midnight)
             SelectedDateTime := CreateDateTime(SelectedDate, 0T);
-            // For available versions, include schedule details
             JsonScheduleDetails.Add('selectedDateTime', SelectedDateTime);
             JsonScheduleDetails.Add('ignoreUpdateWindow', false);
             JsonObject.Add('scheduleDetails', JsonScheduleDetails);
         end;
 
-        // Debug mode: Show request body
         if BCSetup."Debug Mode" then
             Message('DEBUG - Select Target Version Request:\Target Version: %1\Request Body: %2', TargetVersion, Format(JsonObject));
 
-        // Call Admin API to select target version
         Endpoint := '/applications/' + BCEnvironment."Application Family" + '/environments/' + BCEnvironment.Name + '/updates/' + TargetVersion;
         AdminAPIClient.SetTenant(BCTenant);
         if not AdminAPIClient.Patch(Endpoint, JsonObject, ResponseText) then
             Error(FailedToSelectErr, ResponseText);
+    end;
 
-        // Update environment record
+    local procedure UpdateTargetVersionRecord(var BCEnvironment: Record "D4P BC Environment"; TargetVersion: Text[100]; SelectedDate: Date; ExpectedMonth: Integer; ExpectedYear: Integer)
+    var
+        SelectedDateTime: DateTime;
+    begin
         BCEnvironment."Target Version" := TargetVersion;
-        if IsAvailable then begin
+        if SelectedDate <> 0D then begin
+            SelectedDateTime := CreateDateTime(SelectedDate, 0T);
             BCEnvironment."Selected DateTime" := SelectedDateTime;
             BCEnvironment."Expected Availability" := '';
-            Message(UpdateScheduledMsg, TargetVersion, SelectedDate);
         end else begin
             BCEnvironment."Selected DateTime" := 0DT;
             BCEnvironment."Expected Availability" := Format(ExpectedYear) + '/' + PadStr('', 2 - StrLen(Format(ExpectedMonth)), '0') + Format(ExpectedMonth);
-            Message(UpdateSelectedMsg, TargetVersion, ExpectedMonth, ExpectedYear);
         end;
         BCEnvironment.Modify();
     end;
