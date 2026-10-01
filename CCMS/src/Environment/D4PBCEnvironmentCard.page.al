@@ -368,7 +368,7 @@ page 62004 "D4P BC Environment Card"
                     TargetVersion: Text[100];
                 begin
                     // Get available updates from API
-                    EnvironmentManagement.GetAvailableUpdates(Rec, TempAvailableUpdate);
+                    EnvironmentManagement.GetAvailableUpdates(Rec, TempAvailableUpdate, true);
 
                     if TempAvailableUpdate.IsEmpty() then
                         Error(NoUpdatesAvailableErr, Rec.Name);

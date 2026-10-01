@@ -234,6 +234,59 @@ page 62003 "D4P BC Environment List"
                     CurrPage.Update(false);
                 end;
             }
+            action(RescheduleUpdates)
+            {
+                Caption = 'Reschedule Updates';
+                Image = Timesheet;
+                ToolTip = 'Select an update version and date to apply to all selected environments.';
+                trigger OnAction()
+                var
+                    SelectedEnvironment: Record "D4P BC Environment";
+                    FirstEnvironment: Record "D4P BC Environment";
+                    TempAvailableUpdate: Record "D4P BC Available Update" temporary;
+                    EnvironmentManagement: Codeunit "D4P BC Environment Mgt";
+                    UpdateSelectionDialog: Page "D4P Update Selection Dialog";
+                    SelectedDate: Date;
+                    ExpectedMonth: Integer;
+                    ExpectedYear: Integer;
+                    TotalCount: Integer;
+                    UpdateDateText: Text[30];
+                    NoEnvironmentsSelectedErr: Label 'Select at least one environment.';
+                    NoUpdatesAvailableErr: Label 'No updates available for the environment %1.', Comment = '%1 = Environment Name';
+                    NoDateSelectedTxt: Label 'No date selected';
+                    ApplyUpdateQst: Label 'Apply update version %1 with date %2 to all %3 selected environment(s)?', Comment = '%1 = Target version, %2 = Selected date, %3 = Number of selected environments';
+                    TargetVersion: Text[100];
+                begin
+                    CurrPage.SetSelectionFilter(SelectedEnvironment);
+                    TotalCount := SelectedEnvironment.Count();
+                    if TotalCount = 0 then
+                        Error(NoEnvironmentsSelectedErr);
+
+                    if not SelectedEnvironment.FindFirst() then
+                        exit;
+
+                    FirstEnvironment := SelectedEnvironment;
+                    EnvironmentManagement.GetAvailableUpdates(FirstEnvironment, TempAvailableUpdate, true);
+                    if TempAvailableUpdate.IsEmpty() then
+                        Error(NoUpdatesAvailableErr, FirstEnvironment.Name);
+
+                    UpdateSelectionDialog.SetData(TempAvailableUpdate);
+                    if UpdateSelectionDialog.RunModal() <> Action::OK then
+                        exit;
+
+                    UpdateSelectionDialog.GetSelectedVersion(TargetVersion, SelectedDate, ExpectedMonth, ExpectedYear);
+                    if SelectedDate = 0D then
+                        UpdateDateText := NoDateSelectedTxt
+                    else
+                        UpdateDateText := Format(SelectedDate);
+
+                    if not Confirm(ApplyUpdateQst, false, TargetVersion, UpdateDateText, TotalCount) then
+                        exit;
+
+                    EnvironmentManagement.SetTargetVersionForEnvironments(SelectedEnvironment, TargetVersion, SelectedDate, ExpectedMonth, ExpectedYear);
+                    CurrPage.Update(false);
+                end;
+            }
             action(CreateNewEnvironment)
             {
                 Caption = 'New';
@@ -462,6 +515,9 @@ page 62003 "D4P BC Environment List"
                 {
                 }
                 actionref(GetEnvironmentUpdateInfoPromoted; GetEnvironmentUpdateInfo)
+                {
+                }
+                actionref(RescheduleUpdatesPromoted; RescheduleUpdates)
                 {
                 }
                 actionref(CreateNewEnvironmentPromoted; CreateNewEnvironment)
